@@ -18,7 +18,7 @@ library DeploymentLibrary {
     address initialPriceChecker,
     address initialLimitOrderPriceChecker,
     address initialComposableCow,
-    address initialHandler,
+    address initialTwapHandler,
     address initialRelayer
   ) internal {
     Create2Utils.create2Deploy(
@@ -32,7 +32,7 @@ library DeploymentLibrary {
         initialPriceChecker,
         initialLimitOrderPriceChecker,
         initialComposableCow,
-        initialHandler,
+        initialTwapHandler,
         initialRelayer
       )
     );

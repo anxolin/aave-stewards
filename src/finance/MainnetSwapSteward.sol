@@ -15,6 +15,7 @@ import {IConditionalOrder} from "src/finance/interfaces/IConditionalOrder.sol";
 import {IMilkman} from "src/finance/interfaces/IMilkman.sol";
 import {IPriceChecker} from "src/finance/interfaces/IPriceChecker.sol";
 import {IMainnetSwapSteward} from "src/finance/interfaces/IMainnetSwapSteward.sol";
+import {IOrderHandler} from "src/finance/interfaces/IOrderHandler.sol";
 
 /**
  * @title MainnetSwapSteward
@@ -64,7 +65,7 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
   address public immutable COLLECTOR;
 
   /// @inheritdoc IMainnetSwapSteward
-  address public immutable HANDLER;
+  address public immutable twapHandler;
 
   /// @inheritdoc IMainnetSwapSteward
   address public relayer;
@@ -87,6 +88,9 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
   /// @inheritdoc IMainnetSwapSteward
   mapping(address token => uint256 budget) public tokenBudget;
 
+  /// @inheritdoc IMainnetSwapSteward
+  mapping(address handler => bool isAllowed) public allowedHandlers;
+
   constructor(
     address initialOwner,
     address initialGuardian,
@@ -95,11 +99,11 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
     address initialPriceChecker,
     address initialLimitOrderPriceChecker,
     address initialComposableCow,
-    address initialHandler,
+    address initialTwapHandler,
     address initialRelayer
   ) OwnableWithGuardian(initialOwner, initialGuardian) ERC1271Forwarder(initialComposableCow) {
     if (collector == address(0)) revert InvalidZeroAddress();
-    if (initialHandler == address(0)) revert InvalidZeroAddress();
+    if (initialTwapHandler == address(0)) revert InvalidZeroAddress();
     if (initialComposableCow == address(0)) revert InvalidZeroAddress();
 
     _setMilkman(initialMilkman);
@@ -108,7 +112,10 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
     _setRelayer(initialRelayer);
 
     COLLECTOR = collector;
-    HANDLER = initialHandler;
+    twapHandler = initialTwapHandler;
+
+    // Set the TWAP handler as allowed by default
+    allowedHandlers[initialTwapHandler] = true;
   }
 
   /// @inheritdoc IMainnetSwapSteward
@@ -151,13 +158,6 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
   ) external onlyOwnerOrGuardian {
     uint256 amount = partSellAmount * numParts;
 
-    _validateCommon(fromToken, toToken, amount);
-    _transferTokensIn(fromToken, amount);
-
-    if (msg.sender != owner()) {
-      _decreaseBudget(fromToken, amount);
-    }
-
     IMainnetSwapSteward.TWAPData memory twapData = TWAPData({
       sellToken: IERC20(fromToken),
       buyToken: IERC20(toToken),
@@ -168,22 +168,71 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
       n: numParts,
       t: partDuration,
       span: span,
-      appData: bytes32(0)
+      appData: bytes32(0) // TODO: Why not allow passing the appData? Not doing it to avoid breaking changes
     });
 
     IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams(
-      IConditionalOrder(HANDLER), "AaveSwapper-TWAP-Swap", abi.encode(twapData)
+      IConditionalOrder(twapHandler), "AaveSwapper-TWAP-Swap", abi.encode(twapData)
     );
 
-    bool orderExists = COMPOSABLE_COW.singleOrders(address(this), keccak256(abi.encode(params)));
+    _createComposableCowOrder(fromToken, toToken, amount, params);
+  }
 
+  /// @inheritdoc IMainnetSwapSteward
+  function createComposableCowOrder(IOrderHandler _orderHandler, bytes32 salt, bytes calldata staticInput)
+    external
+    onlyOwnerOrGuardian
+  {
+    // Validate that the handler is allowed
+    if (!allowedHandlers[address(_orderHandler)]) revert HandlerNotAllowed();
+
+    IOrderHandler orderHandler = IOrderHandler(address(_orderHandler));
+
+    // Extract order information from the staticInput
+    (address fromToken, address toToken, uint256 amount) = orderHandler.extractOrderInfo(staticInput);
+
+    IConditionalOrder.ConditionalOrderParams memory params = IConditionalOrder.ConditionalOrderParams({
+      handler: orderHandler.composableCowHandler(),
+      salt: salt,
+      staticInput: staticInput
+    });
+
+    _createComposableCowOrder(fromToken, toToken, amount, params);
+  }
+
+  /// @dev Internal function to create a composable cow order
+  /// @param fromToken The token that is being swapped from
+  /// @param toToken The token that is being swapped to
+  /// @param amount The amount of fromToken to swap
+  /// @param params The conditional order parameters
+  /// @dev The handler in params must be previously approved via allowedHandlers
+  function _createComposableCowOrder(
+    address fromToken,
+    address toToken,
+    uint256 amount,
+    IConditionalOrder.ConditionalOrderParams memory params
+  ) internal {
+    // Validate common swap parameters
+    _validateCommon(fromToken, toToken, amount);
+
+    // Transfer tokens in and decrease budget if needed
+    _transferTokensIn(fromToken, amount);
+
+    if (msg.sender != owner()) {
+      _decreaseBudget(fromToken, amount);
+    }
+
+    // Check if order already exists
+    bool orderExists = COMPOSABLE_COW.singleOrders(address(this), keccak256(abi.encode(params)));
     if (orderExists) revert OrderExists();
 
+    // Create the conditional order
     COMPOSABLE_COW.create(params, true);
 
+    // Increase allowance for the relayer
     IERC20(fromToken).safeIncreaseAllowance(relayer, amount);
 
-    emit TWAPSwapRequested(fromToken, toToken, amount);
+    emit ComposableCowOrderCreated(fromToken, toToken, amount, address(params.handler));
   }
 
   /// @inheritdoc IMainnetSwapSteward
@@ -204,6 +253,7 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
     _cancelSwap(tradeMilkman, limitOrderPriceChecker, fromToken, toToken, amount, abi.encode(amountOut));
   }
 
+  // TODO: Refactor and provide a way to cancel any composable cow order
   /// @inheritdoc IMainnetSwapSteward
   function cancelTwapSwap(
     address fromToken,
@@ -237,7 +287,7 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
         keccak256(
           abi.encode(
             IConditionalOrder.ConditionalOrderParams(
-              IConditionalOrder(HANDLER), "AaveSwapper-TWAP-Swap", abi.encode(twapData)
+              IConditionalOrder(twapHandler), "AaveSwapper-TWAP-Swap", abi.encode(twapData)
             )
           )
         )
@@ -248,7 +298,7 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
       keccak256(
         abi.encode(
           IConditionalOrder.ConditionalOrderParams(
-            IConditionalOrder(HANDLER), "AaveSwapper-TWAP-Swap", abi.encode(twapData)
+            IConditionalOrder(twapHandler), "AaveSwapper-TWAP-Swap", abi.encode(twapData)
           )
         )
       )
@@ -292,6 +342,15 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
     swapApprovedToken[fromToken][toToken] = allowed;
 
     emit SetSwappablePair(fromToken, toToken, allowed);
+  }
+
+  /// @inheritdoc IMainnetSwapSteward
+  function setAllowedHandler(address handler, bool allowed) external onlyOwner {
+    if (handler == address(0)) revert InvalidZeroAddress();
+
+    allowedHandlers[handler] = allowed;
+
+    emit SetAllowedHandler(handler, allowed);
   }
 
   /// @inheritdoc IMainnetSwapSteward

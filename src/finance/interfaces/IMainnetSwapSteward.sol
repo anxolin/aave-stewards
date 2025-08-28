@@ -2,6 +2,8 @@
 pragma solidity ^0.8.0;
 
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IConditionalOrder} from "./IConditionalOrder.sol";
+import {IOrderHandler} from "./IOrderHandler.sol";
 
 interface IMainnetSwapSteward {
   /// @dev Struct representing a TWAP Swap order on COW Swap
@@ -48,11 +50,19 @@ interface IMainnetSwapSteward {
   /// @dev Token pair has not been set for swapping
   error UnrecognizedTokenSwap();
 
+  /// @dev Handler is not allowed
+  error HandlerNotAllowed();
+
   /// @notice Emitted when a token is approved for swapping with its corresponding USD oracle
   /// @param fromToken The address of the token approved for swapping from
   /// @param toToken The address of the token approved to swap to
   /// @param allowed Whether token pair is allowed or disallowed
   event SetSwappablePair(address indexed fromToken, address indexed toToken, bool allowed);
+
+  /// @notice Emitted when a handler is approved for conditional orders
+  /// @param handler The address of the handler
+  /// @param allowed Whether the handler is allowed or disallowed
+  event SetAllowedHandler(address indexed handler, bool allowed);
 
   /// @notice Emitted when the Milkman contract address is updated
   /// @param oldAddress The old Milkman instance address
@@ -112,13 +122,22 @@ interface IMainnetSwapSteward {
   /// @param fromToken The token that was being swapped from
   /// @param toToken The token that was being swapped for
   /// @param totalAmount The total amount of fromToken that was going to be swapped
-  event TWAPSwapCanceled(address indexed fromToken, address indexed toToken, uint256 totalAmount);
+  event TWAPSwapCanceled(address indexed fromToken, address indexed toToken, uint256 totalAmount); // TODO: Remove, use one more generic for all composable cow orders
 
   /// @notice Emitted when a TWAP Swap order is created
   /// @param fromToken The token that is being swapped from
   /// @param toToken The token that is being swapped for
   /// @param totalAmount The total amount of fromToken that is going to be swapped
-  event TWAPSwapRequested(address indexed fromToken, address indexed toToken, uint256 totalAmount);
+  event TWAPSwapRequested(address indexed fromToken, address indexed toToken, uint256 totalAmount); // TODO: Remove, use ComposableCowOrderCreated instead
+
+  /// @notice Emitted when a ComposableCoW conditional order is created
+  /// @param fromToken The token that is being swapped from
+  /// @param toToken The token that is being swapped for
+  /// @param amount The total amount of fromToken that is going to be swapped
+  /// @param handler The handler address for the conditional order
+  event ComposableCowOrderCreated(
+    address indexed fromToken, address indexed toToken, uint256 amount, address indexed handler
+  );
 
   /// @notice Emitted when a token's budget is updated
   /// @param token The address of the token
@@ -131,8 +150,12 @@ interface IMainnetSwapSteward {
   /// @notice Returns the maximum allowed slippage for swaps (in BPS)
   function MAX_SLIPPAGE() external view returns (uint256);
 
-  /// @notice Returns address of handler of conditional orders
-  function HANDLER() external view returns (address);
+  /// @notice Returns the address of the TWAP handler
+  function twapHandler() external view returns (address);
+
+  /// @notice Returns whether a handler is allowed for conditional orders
+  /// @param handler The address of the handler to check
+  function allowedHandlers(address handler) external view returns (bool);
 
   /// @notice Returns the address of the Milkman contract
   function milkman() external view returns (address);
@@ -193,6 +216,13 @@ interface IMainnetSwapSteward {
     uint256 partDuration,
     uint256 span
   ) external;
+
+  /// @notice Creates a generic ComposableCoW conditional
+  /// @param _orderHandler The address of the order handler contract
+  /// @param salt The salt for the conditional order
+  /// @param staticInput The static input of the composable cow order
+  /// @dev The handler in params must be previously approved via allowedHandlers
+  function createComposableCowOrder(IOrderHandler _orderHandler, bytes32 salt, bytes calldata staticInput) external;
 
   /// @notice Function to cancel an existing swap
   /// @param tradeMilkman Address of the Milkman contract created upon order submission
@@ -269,6 +299,11 @@ interface IMainnetSwapSteward {
   /// @param toToken The address of the token to swap to
   /// @param allowed Sets swappable pair to allowed/disallowed
   function setSwappablePair(address fromToken, address toToken, bool allowed) external;
+
+  /// @notice Sets a handler as allowed for conditional orders
+  /// @param handler The address of the handler
+  /// @param allowed Whether the handler is allowed or disallowed
+  function setAllowedHandler(address handler, bool allowed) external;
 
   /// @notice Increases a token's budget (the maximum that can be swapped from)
   /// @param token The address of the token to increase the budget for

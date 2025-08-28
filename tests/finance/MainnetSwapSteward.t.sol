@@ -240,7 +240,7 @@ contract ConstructorTest is Test {
     assertEq(steward.milkman(), MILKMAN);
     assertEq(steward.priceChecker(), PRICE_CHECKER);
     assertEq(steward.limitOrderPriceChecker(), LIMIT_ORDER_PRICE_CHECKER);
-    assertEq(steward.HANDLER(), TWAP_HANDLER);
+    assertEq(steward.twapHandler(), TWAP_HANDLER);
     assertEq(steward.relayer(), COW_RELAYER);
   }
 }
