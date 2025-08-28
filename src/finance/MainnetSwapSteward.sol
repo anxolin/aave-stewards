@@ -89,7 +89,7 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
   mapping(address token => uint256 budget) public tokenBudget;
 
   /// @inheritdoc IMainnetSwapSteward
-  mapping(address handler => bool isAllowed) public allowedHandlers;
+  mapping(IOrderHandler handler => bool isAllowed) public allowedHandlers;
 
   constructor(
     address initialOwner,
@@ -113,9 +113,6 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
 
     COLLECTOR = collector;
     twapHandler = initialTwapHandler;
-
-    // Set the TWAP handler as allowed by default
-    allowedHandlers[initialTwapHandler] = true;
   }
 
   /// @inheritdoc IMainnetSwapSteward
@@ -184,7 +181,7 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
     onlyOwnerOrGuardian
   {
     // Validate that the handler is allowed
-    if (!allowedHandlers[address(_orderHandler)]) revert HandlerNotAllowed();
+    if (!allowedHandlers[_orderHandler]) revert HandlerNotAllowed();
 
     IOrderHandler orderHandler = IOrderHandler(address(_orderHandler));
 
@@ -345,12 +342,12 @@ contract MainnetSwapSteward is IMainnetSwapSteward, OwnableWithGuardian, Multica
   }
 
   /// @inheritdoc IMainnetSwapSteward
-  function setAllowedHandler(address handler, bool allowed) external onlyOwner {
-    if (handler == address(0)) revert InvalidZeroAddress();
+  function setAllowedHandler(IOrderHandler handler, bool allowed) external onlyOwner {
+    if (address(handler) == address(0)) revert InvalidZeroAddress();
 
     allowedHandlers[handler] = allowed;
 
-    emit SetAllowedHandler(handler, allowed);
+    emit SetAllowedHandler(address(handler), allowed);
   }
 
   /// @inheritdoc IMainnetSwapSteward

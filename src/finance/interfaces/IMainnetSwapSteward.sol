@@ -155,7 +155,7 @@ interface IMainnetSwapSteward {
 
   /// @notice Returns whether a handler is allowed for conditional orders
   /// @param handler The address of the handler to check
-  function allowedHandlers(address handler) external view returns (bool);
+  function allowedHandlers(IOrderHandler handler) external view returns (bool);
 
   /// @notice Returns the address of the Milkman contract
   function milkman() external view returns (address);
@@ -303,7 +303,7 @@ interface IMainnetSwapSteward {
   /// @notice Sets a handler as allowed for conditional orders
   /// @param handler The address of the handler
   /// @param allowed Whether the handler is allowed or disallowed
-  function setAllowedHandler(address handler, bool allowed) external;
+  function setAllowedHandler(IOrderHandler handler, bool allowed) external;
 
   /// @notice Increases a token's budget (the maximum that can be swapped from)
   /// @param token The address of the token to increase the budget for
